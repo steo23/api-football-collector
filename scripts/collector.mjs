@@ -3,7 +3,11 @@ import { writeFileSync } from 'node:fs';
 
 const API_BASE='https://v3.football.api-sports.io';
 const DATABASE='api-football-odds';
-const TRACKED=new Set([39,40,41,42,43,61,62,71,78,79,88,94,98,103,106,113,119,128,135,136,140,141,144,169,179,180,183,184,197,203,207,208,218,235,244,253,262,283,357,483,1032]);
+const DEFAULT_APPROVED_LEAGUES=[39,40,41,42,43,61,62,71,78,79,88,94,98,103,106,113,119,128,135,136,140,141,144,169,179,180,183,184,197,203,207,208,218,235,244,253,262,283,357,483,1032];
+const APPROVED_LEAGUES=new Set(
+  (process.env.MODEL_LEAGUE_IDS||DEFAULT_APPROVED_LEAGUES.join(','))
+    .split(',').map(value=>Number(value.trim())).filter(Number.isInteger)
+);
 const TARGETS=[4320,1440,720,360,180,60,15];
 const ALLOWED=new Map([
   [1,new Set(['home','draw','away'])],
@@ -82,19 +86,20 @@ function dueTarget(minutes) {
 async function refreshFixtures(date) {
   const rows=await apiGet('fixtures',{date}); const updated=iso(new Date()); const statements=[];
   for (const item of rows) {
-    if (!TRACKED.has(Number(item.league.id))) continue;
     const values=[item.fixture.id,item.league.id,item.league.season,item.fixture.date,item.fixture.status.short,
       item.teams.home.id,item.teams.away.id,item.teams.home.name,item.teams.away.name,
       item.goals?.home??null,item.goals?.away??null,updated].map(sqlValue).join(',');
     statements.push(`INSERT INTO cloud_fixtures(fixture_id,league_id,season,kickoff_utc,status_short,home_team_id,away_team_id,home_team_name,away_team_name,goals_home,goals_away,updated_at) VALUES(${values}) ON CONFLICT(fixture_id) DO UPDATE SET league_id=excluded.league_id,season=excluded.season,kickoff_utc=excluded.kickoff_utc,status_short=excluded.status_short,home_team_id=excluded.home_team_id,away_team_id=excluded.away_team_id,home_team_name=excluded.home_team_name,away_team_name=excluded.away_team_name,goals_home=excluded.goals_home,goals_away=excluded.goals_away,updated_at=excluded.updated_at;`);
   }
   statements.push(`INSERT INTO cloud_sync_state(key,value,updated_at) VALUES('fixtures_last_date',${sqlValue(date)},${sqlValue(updated)}) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at;`);
-  d1Write(statements); return statements.length-1;
+  d1Write(statements); return {received:rows.length,stored:statements.length-1};
 }
 
 function dueFixtures(now) {
   const end=iso(new Date(now.getTime()+73*3600000));
-  const rows=d1Query(`SELECT f.fixture_id,f.kickoff_utc FROM cloud_fixtures f WHERE f.status_short IN ('NS','TBD') AND f.kickoff_utc>${sqlValue(iso(now))} AND f.kickoff_utc<=${sqlValue(end)} ORDER BY f.kickoff_utc LIMIT 500;`);
+  if (!APPROVED_LEAGUES.size) return [];
+  const leagueIds=[...APPROVED_LEAGUES].sort((a,b)=>a-b).join(',');
+  const rows=d1Query(`SELECT f.fixture_id,f.league_id,f.kickoff_utc FROM cloud_fixtures f WHERE f.league_id IN (${leagueIds}) AND f.status_short IN ('NS','TBD') AND f.kickoff_utc>${sqlValue(iso(now))} AND f.kickoff_utc<=${sqlValue(end)} ORDER BY f.kickoff_utc LIMIT 500;`);
   const candidates=[];
   for (const row of rows) {
     const minutes=Math.floor((new Date(row.kickoff_utc)-now)/60000); const target=dueTarget(minutes);
@@ -136,10 +141,17 @@ async function main() {
   const now=new Date(); const date=dateForSlot(now);
   d1Write([`INSERT INTO cloud_sync_state(key,value,updated_at) VALUES('github_heartbeat','started',${sqlValue(iso(now))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at;`]);
   try {
-    const fixtures=await refreshFixtures(date); const jobs=dueFixtures(now); let values=0;
+    const fixtureRefresh=await refreshFixtures(date); const jobs=dueFixtures(now); let values=0;
     for (const job of jobs) values+=await collectOdds(job);
     d1Write([`INSERT INTO cloud_sync_state(key,value,updated_at) VALUES('github_heartbeat','completed',${sqlValue(iso(new Date()))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at;`]);
-    console.log(JSON.stringify({ok:true,at:iso(now),fixture_date:date,fixtures,jobs:jobs.length,values}));
+    console.log(JSON.stringify({
+      ok:true,at:iso(now),fixture_date:date,
+      fixtures:fixtureRefresh.stored,
+      global_fixtures_received:fixtureRefresh.received,
+      global_fixtures_stored:fixtureRefresh.stored,
+      approved_leagues:APPROVED_LEAGUES.size,
+      odds_jobs:jobs.length,values
+    }));
   } catch (error) {
     d1Write([`INSERT INTO cloud_sync_state(key,value,updated_at) VALUES('github_error',${sqlValue(String(error).slice(0,1000))},${sqlValue(iso(new Date()))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at;`]);
     throw error;
