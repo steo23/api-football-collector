@@ -1,0 +1,11 @@
+{
+  "name": "api-football-github-collector",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "wrangler": "4.131.2"
+  },
+  "scripts": {
+    "collect": "node scripts/collector.mjs"
+  }
+}

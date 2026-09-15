@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "api-football-github-collector",
+  "compatibility_date": "2026-09-14",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "api-football-odds",
+      "database_id": "fb8b9bed-db78-419e-ad3a-95af36afed7e"
+    }
+  ]
+}

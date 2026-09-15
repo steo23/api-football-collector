@@ -1,0 +1,49 @@
+API-Football GitHub Actions collector v1.12
+===========================================
+
+PURPOSE
+Runs API-Football collection from GitHub every 15 minutes and writes directly
+to the existing Cloudflare D1 database. This bypasses API-Football throttling
+of Cloudflare Worker outbound requests. Only betting-relevant markets are kept:
+1X2, O/U 2.5, O/U 3.5 and BTTS.
+
+REPOSITORY
+Create a new PUBLIC GitHub repository named api-football-collector. Public is
+required to avoid private-repository Actions minute charges at this frequency.
+Upload every file and folder in this package. The secrets are never stored in
+the repository.
+
+CLOUDFLARE API TOKEN
+In Cloudflare: Profile > API Tokens > Create Token > Custom token.
+Permission: Account / D1 / Edit.
+Account resource: your current Cloudflare account.
+Create and copy the token once.
+
+GITHUB SECRETS
+Repository > Settings > Secrets and variables > Actions > New repository secret.
+Create exactly:
+
+API_FOOTBALL_KEY       = your API-Football key
+CLOUDFLARE_API_TOKEN   = the new D1 Edit token
+CLOUDFLARE_ACCOUNT_ID  = e32a0b08a9ab7bcb09e58eab931e5254
+
+Do not paste any secret into a repository file, commit, issue or chat.
+
+FIRST TEST
+Open Actions > API Football Collector > Run workflow. The run must finish with
+a green tick. Its final log line contains JSON with ok:true.
+
+VERIFY FROM WINDOWS
+From the combined project folder run:
+  .\check-cloud.ps1
+
+The cloud_sync_state table must show github_heartbeat = completed with a recent
+timestamp. Then run:
+  .\run.ps1 sync-cloud
+  .\run.ps1 status
+  .\run.ps1 validate
+
+ONLY AFTER A SUCCESSFUL GITHUB RUN
+Delete or disable api-football-odds-collector-v2 so Cloudflare Worker Cron stops
+making rejected API calls. Keep the D1 database. Keep the local Windows Odds
+Collector enabled until two GitHub runs have succeeded.
